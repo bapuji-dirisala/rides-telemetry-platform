@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rides-telemetry-platform"
-version = "0.0.1"
+version = "0.1.0"
 description = "Real-time rides telemetry: Kafka + Kinesis streaming ingestion, Structured Streaming to Delta, geospatial gold marts, deployed on AWS + Databricks + Kubernetes."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -22,6 +22,15 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+generator = [
+    "pydantic>=2.7",
+    "pyarrow>=17.0",
+    "httpx>=0.27",
+    # Optional at runtime — used by the CLI when --use-system-trust-store
+    # is set, so downloads work behind corporate TLS-inspecting proxies
+    # (Zscaler, Netskope, etc.) without disabling verification.
+    "truststore>=0.9",
+]
 producer = [
     "confluent-kafka>=2.5",
     "faker>=25.0",
