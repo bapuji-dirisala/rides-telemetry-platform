@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+pip-log.txt
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# IDE / editors
+.idea/
+.vscode/
+.cursor/
+*.swp
+*~
+
+# Learning / experimentation scratch space — never committed
+scratch/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data — never commit local datasets
+data/
+lakehouse/
+*.parquet
+*.delta
+!tests/**/*.parquet
+!tests/**/*.csv
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Airflow — runtime state, keep the dag source and Dockerfile
+airflow/logs/
+airflow/plugins/
+!airflow/plugins/.gitkeep
