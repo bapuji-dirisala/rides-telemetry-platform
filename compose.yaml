@@ -1,0 +1,76 @@
+# Local Kafka stack for phase 2 (and every phase that talks to Kafka).
+#
+# Redpanda is used instead of Apache Kafka:
+#   - Single binary, no ZooKeeper / no KRaft coordination overhead.
+#   - Wire-compatible with Kafka clients (confluent-kafka, kafka-python,
+#     Spark's Kafka connector, kcat, etc.), so downstream phases don't
+#     need to know or care.
+#   - Runs comfortably in ~200 MB of RAM on a laptop.
+#
+# Start:   docker compose up -d
+# Console: http://localhost:8080
+# Broker:  localhost:19092  (from the host)
+#          redpanda:9092    (from inside the compose network)
+
+name: rides-telemetry
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    container_name: rides-redpanda
+    hostname: redpanda
+    command:
+      - redpanda
+      - start
+      # Development-only overcommit / smp settings — the defaults assume
+      # a dedicated production host and will refuse to start on a laptop.
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      # Two listeners:
+      #   - internal (name: docker): reachable as redpanda:9092 from
+      #     other compose services (Spark, consumers, etc. in later phases)
+      #   - external (name: host): reachable as localhost:19092 from
+      #     the host, so the producer CLI on the developer laptop can
+      #     connect without going through docker networking.
+      - --kafka-addr
+      - docker://0.0.0.0:9092,host://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - docker://redpanda:9092,host://localhost:19092
+      - --pandaproxy-addr
+      - docker://0.0.0.0:8082,host://0.0.0.0:18082
+      - --advertise-pandaproxy-addr
+      - docker://redpanda:8082,host://localhost:18082
+    ports:
+      - "19092:19092"   # Kafka API (external)
+      - "18082:18082"   # HTTP Proxy (external)
+      - "9644:9644"     # Redpanda admin API
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health", "--exit-when-healthy"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+
+  console:
+    image: docker.redpanda.com/redpandadata/console:v2.7.2
+    container_name: rides-redpanda-console
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      # Console talks to the broker on the internal listener.
+      KAFKA_BROKERS: redpanda:9092
+      # Point the admin panel at Redpanda's admin API for topic-config
+      # editing from the UI.
+      REDPANDA_ADMINAPI_ENABLED: "true"
+      REDPANDA_ADMINAPI_URLS: http://redpanda:9644
+
+volumes:
+  redpanda-data:

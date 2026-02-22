@@ -10,9 +10,10 @@ parallel Kinesis path), landed into a Delta lakehouse with exactly-once
 semantics, and served as geospatial gold marts for surge pricing, fraud
 detection, and driver-rider matching.
 
-> **Status:** Phase 1 — synthetic ride event generator shipped, backed by
-> real NYC TLC data. Twelve-phase roadmap below; every phase gets a
-> dedicated design doc under [`docs/`](docs/).
+> **Status:** Phase 2 — Kafka producer shipped. Local Redpanda + a
+> producer that streams real NYC TLC events onto two versioned topics
+> with production-shaped delivery guarantees. Twelve-phase roadmap
+> below; every phase gets a dedicated design doc under [`docs/`](docs/).
 
 ## What this project demonstrates
 
@@ -69,7 +70,7 @@ Detailed component topology, ADRs, and design principles land in
 |-------|-------|--------|-------|
 | 0 | Repo scaffolding, tooling, CI | ✅ done | [docs/phase-00-scaffolding.md](docs/phase-00-scaffolding.md) |
 | 1 | Ride event generator (real NYC TLC data) | ✅ done | [docs/phase-01-event-generator.md](docs/phase-01-event-generator.md) |
-| 2 | Kafka producer (Redpanda local) | ⏳ planned | |
+| 2 | Kafka producer (Redpanda local) | ✅ done | [docs/phase-02-kafka-producer.md](docs/phase-02-kafka-producer.md) |
 | 3 | Bronze streaming — Kafka → Delta | ⏳ planned | |
 | 4 | Silver streaming — watermarks, dedup, stateful joins | ⏳ planned | |
 | 5 | Gold real-time marts (surge, fraud, active trips) | ⏳ planned | |
@@ -106,12 +107,12 @@ as prerequisites in their respective phase docs.
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev,generator]"
+pip install -e ".[dev,generator,producer]"
 pre-commit install
 pytest
 ```
 
-To see real ride events streaming through the generator:
+Peek at real ride events streaming through the generator:
 
 ```bash
 python -m rides_telemetry.generator --month 2024-01 --max-trips 3 --seed 42 -v
@@ -120,8 +121,20 @@ python -m rides_telemetry.generator --month 2024-01 --max-trips 3 --seed 42 -v
 This downloads ~50 MB of real Uber/Lyft trips from the NYC TLC public
 feed on first run (cached under `data/nyc_tlc/`) and emits lifecycle +
 GPS events as NDJSON on stdout. See
-[`docs/phase-01-event-generator.md`](docs/phase-01-event-generator.md)
-for details.
+[`docs/phase-01-event-generator.md`](docs/phase-01-event-generator.md).
+
+Stand up local Kafka (Redpanda) and stream real trips onto it:
+
+```bash
+docker compose up -d                             # broker + browsable console
+python -m rides_telemetry.producer \
+    --month 2024-01 --max-trips 100 --seed 42 \
+    --use-system-trust-store -v
+open http://localhost:8080                       # Redpanda Console
+```
+
+Details in
+[`docs/phase-02-kafka-producer.md`](docs/phase-02-kafka-producer.md).
 
 ## Two operating modes
 
