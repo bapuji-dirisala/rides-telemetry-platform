@@ -27,7 +27,7 @@ jobs:
       - name: install dev deps
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,generator]"
+          pip install -e ".[dev,generator,producer]"
 
       - name: ruff check
         run: ruff check .
@@ -50,10 +50,10 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: install package with dev + generator extras
+      - name: install package with dev + generator + producer extras
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,generator]"
+          pip install -e ".[dev,generator,producer]"
 
       - name: pytest
         run: pytest -q
