@@ -10,8 +10,9 @@ parallel Kinesis path), landed into a Delta lakehouse with exactly-once
 semantics, and served as geospatial gold marts for surge pricing, fraud
 detection, and driver-rider matching.
 
-> **Status:** Phase 0 — repo scaffolding shipped. Twelve-phase roadmap
-> below; every phase gets a dedicated design doc under [`docs/`](docs/).
+> **Status:** Phase 1 — synthetic ride event generator shipped, backed by
+> real NYC TLC data. Twelve-phase roadmap below; every phase gets a
+> dedicated design doc under [`docs/`](docs/).
 
 ## What this project demonstrates
 
@@ -67,7 +68,7 @@ Detailed component topology, ADRs, and design principles land in
 | Phase | Focus | Status | Notes |
 |-------|-------|--------|-------|
 | 0 | Repo scaffolding, tooling, CI | ✅ done | [docs/phase-00-scaffolding.md](docs/phase-00-scaffolding.md) |
-| 1 | Synthetic ride event generator | ⏳ planned | |
+| 1 | Ride event generator (real NYC TLC data) | ✅ done | [docs/phase-01-event-generator.md](docs/phase-01-event-generator.md) |
 | 2 | Kafka producer (Redpanda local) | ⏳ planned | |
 | 3 | Bronze streaming — Kafka → Delta | ⏳ planned | |
 | 4 | Silver streaming — watermarks, dedup, stateful joins | ⏳ planned | |
@@ -105,13 +106,22 @@ as prerequisites in their respective phase docs.
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,generator]"
 pre-commit install
 pytest
 ```
 
-Phase 0 is scaffolding only — no streaming code yet. Later phases will add
-per-phase runbook sections and their own compose files.
+To see real ride events streaming through the generator:
+
+```bash
+python -m rides_telemetry.generator --month 2024-01 --max-trips 3 --seed 42 -v
+```
+
+This downloads ~50 MB of real Uber/Lyft trips from the NYC TLC public
+feed on first run (cached under `data/nyc_tlc/`) and emits lifecycle +
+GPS events as NDJSON on stdout. See
+[`docs/phase-01-event-generator.md`](docs/phase-01-event-generator.md)
+for details.
 
 ## Two operating modes
 
