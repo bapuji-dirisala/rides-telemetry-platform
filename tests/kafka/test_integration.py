@@ -1,17 +1,16 @@
 """Real-broker integration test.
 
-Skipped unless ``RUN_KAFKA_INTEGRATION_TESTS=1`` is set in the env,
-so day-to-day ``pytest`` runs stay fast and Docker-free. To run:
+Marked ``integration`` so day-to-day ``pytest`` runs skip it. To run
+against a local Redpanda:
 
 .. code-block:: bash
 
     docker compose up -d
-    RUN_KAFKA_INTEGRATION_TESTS=1 pytest tests/kafka/test_integration.py -v
+    pytest -m integration tests/kafka/test_integration.py -v
 """
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import UTC, datetime
 
@@ -20,10 +19,7 @@ import pytest
 from rides_telemetry.events import GpsPing
 from rides_telemetry.kafka import EventProducer, KafkaConfig, ensure_topics
 
-_SKIP_REASON = "set RUN_KAFKA_INTEGRATION_TESTS=1 (with docker compose up) to enable"
-_ENABLED = os.environ.get("RUN_KAFKA_INTEGRATION_TESTS") == "1"
-
-pytestmark = pytest.mark.skipif(not _ENABLED, reason=_SKIP_REASON)
+pytestmark = pytest.mark.integration
 
 
 def _unique_topic_suffix() -> str:
