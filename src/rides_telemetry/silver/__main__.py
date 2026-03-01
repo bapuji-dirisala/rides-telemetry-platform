@@ -1,21 +1,26 @@
 """``python -m rides_telemetry.silver`` — run a silver streaming job.
 
-Two symmetric jobs, one per bronze table. Pick one with ``--stream``:
+Three jobs, chained in a bronze → silver → silver pipeline. Pick one
+with ``--stream``:
 
 .. code-block:: bash
 
-    # Continuous silver GPS (row-level dedup + quality filter)
+    # Row-level dedup + quality filter (reads bronze)
     python -m rides_telemetry.silver --stream gps -v
 
-    # Drain everything currently in bronze lifecycle then exit
+    # Fold lifecycle events into one row per trip (reads bronze)
     python -m rides_telemetry.silver --stream trips --once -v
+
+    # Stream-stream join: gps ⋈ trip facts (reads both silver tables)
+    python -m rides_telemetry.silver --stream matched --once -v
 
     # Point at a non-default warehouse (e.g. an isolated test dir)
     python -m rides_telemetry.silver --stream gps \
         --warehouse-root /tmp/rides-lakehouse
 
-Both jobs read from the bronze Delta tables written by phase 3. If
-bronze is empty, silver will simply idle waiting for new data.
+``gps`` and ``trips`` read from the bronze Delta tables written by
+phase 3. ``matched`` reads both silver tables written by ``gps``
+and ``trips`` — so run those first.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ import sys
 from pathlib import Path
 
 from rides_telemetry.silver.gps import stream_gps_to_silver
+from rides_telemetry.silver.matched import stream_matched_to_silver
 from rides_telemetry.silver.streaming import SilverStreamConfig
 from rides_telemetry.silver.trips import stream_trips_to_silver
 from rides_telemetry.spark import LAKEHOUSE_ROOT, SparkSessionConfig, build_spark_session
@@ -37,14 +43,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python -m rides_telemetry.silver",
         description=(
-            "Stream one bronze Delta table into its silver counterpart. "
-            "Runs continuously by default; use --once for a bounded run."
+            "Stream one bronze/silver Delta table into its downstream silver "
+            "counterpart. Runs continuously by default; use --once for a "
+            "bounded run."
         ),
     )
     p.add_argument(
         "--stream",
         required=True,
-        choices=["gps", "trips"],
+        choices=["gps", "trips", "matched"],
         help="Which silver job to run.",
     )
     p.add_argument(
@@ -87,8 +94,12 @@ def main(argv: list[str] | None = None) -> int:
         trigger_processing_time=None if args.once else args.processing_time,
     )
 
-    runner = stream_gps_to_silver if args.stream == "gps" else stream_trips_to_silver
-    query = runner(spark, stream_config, await_termination=True)
+    runners = {
+        "gps": stream_gps_to_silver,
+        "trips": stream_trips_to_silver,
+        "matched": stream_matched_to_silver,
+    }
+    query = runners[args.stream](spark, stream_config, await_termination=True)
 
     _log.info(
         "silver stream '%s' finished — last progress=%s",

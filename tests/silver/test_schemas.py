@@ -26,9 +26,13 @@ from rides_telemetry.events import (
 )
 from rides_telemetry.silver.schemas import (
     GPS_WATERMARK,
+    MATCHED_JOIN_END_SLACK,
+    MATCHED_JOIN_START_SLACK,
+    MATCHED_TRIP_WATERMARK,
     MAX_ACCEPTABLE_ACCURACY_M,
     MAX_PLAUSIBLE_SPEED_KMH,
     SILVER_GPS_SCHEMA,
+    SILVER_MATCHED_SCHEMA,
     SILVER_TRIPS_SCHEMA,
     TRIP_WATERMARK,
 )
@@ -123,6 +127,49 @@ class TestSilverTripsSchema:
             assert field.nullable, f"{ts} must be nullable — partial-state trips exist"
 
 
+class TestSilverMatchedSchema:
+    """Silver matched carries both the ping and its trip context."""
+
+    def test_carries_full_gps_ping(self) -> None:
+        # Every field from silver GPS (except silver_processed_ts, which
+        # matched re-generates for its own layer) should be present.
+        gps_fields = {f.name for f in SILVER_GPS_SCHEMA.fields}
+        gps_fields.discard("silver_processed_ts")
+
+        matched_fields = {f.name for f in SILVER_MATCHED_SCHEMA.fields}
+        missing = gps_fields - matched_fields
+        assert not missing, f"silver matched drops GPS fields: {missing}"
+
+    def test_carries_trip_context_fields(self) -> None:
+        required = {
+            "rider_id",
+            "trip_status",
+            "trip_requested_ts",
+            "trip_started_ts",
+            "trip_ended_ts",
+            "pickup_lat",
+            "pickup_lng",
+            "dropoff_lat",
+            "dropoff_lng",
+        }
+        matched_fields = {f.name for f in SILVER_MATCHED_SCHEMA.fields}
+        missing = required - matched_fields
+        assert not missing, f"silver matched missing trip context: {missing}"
+
+    def test_trip_started_ts_is_not_nullable(self) -> None:
+        # The join pre-filters trips with started_ts IS NOT NULL, so
+        # every matched row must have a start timestamp.
+        started = next(f for f in SILVER_MATCHED_SCHEMA.fields if f.name == "trip_started_ts")
+        assert not started.nullable, "matched rows only exist for started trips"
+
+    def test_event_id_is_matched_row_pk(self) -> None:
+        # event_id is unique per GPS ping, and the join produces at most
+        # one matched row per (event_id, trip_id) — but trip_id is fixed
+        # per event_id in silver GPS, so event_id is effectively the PK.
+        event_id = next(f for f in SILVER_MATCHED_SCHEMA.fields if f.name == "event_id")
+        assert not event_id.nullable
+
+
 class TestQualityThresholds:
     """Sanity-check the tunable constants so a typo can't ship silently."""
 
@@ -143,3 +190,10 @@ class TestQualityThresholds:
         # units — "10 minutes", "2 hours", not "10 hours" for GPS.
         assert GPS_WATERMARK.endswith(("minute", "minutes"))
         assert TRIP_WATERMARK.endswith(("hour", "hours"))
+
+    def test_matched_join_slack_is_reasonable(self) -> None:
+        # Start slack < 1 minute (clock skew, not app buffering).
+        # End slack < 15 minutes (post-drop pings, not next trip's).
+        assert MATCHED_JOIN_START_SLACK.endswith(("second", "seconds"))
+        assert MATCHED_JOIN_END_SLACK.endswith(("minute", "minutes"))
+        assert MATCHED_TRIP_WATERMARK.endswith(("minute", "minutes", "hour", "hours"))
