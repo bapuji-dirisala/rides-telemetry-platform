@@ -12,26 +12,38 @@ services, fraud alerting, driver-rider matching. Every mart here is:
   gigabytes — so a REST layer or a BI tool can pull them without
   a Spark cluster.
 
-Phase 5a ships two marts:
+Phase 5a shipped the operational marts:
 
 - :func:`stream_active_trips_mart` — rolling per-borough count of
   currently in-progress trips.
 - :func:`stream_demand_mart` — 5-min tumbling window of GPS pings
   per borough (distinct trips + drivers), a proxy for demand.
 
-Phase 5b will add fraud detection (impossible-speed pings, same
-driver on two active trips).
+Phase 5b adds fraud detection:
+
+- :func:`stream_fraud_teleport_mart` — flags GPS ping pairs whose
+  implied speed exceeds the plausibility threshold (GPS spoofing,
+  device swapping).
+- :func:`stream_fraud_dual_trip_mart` — flags drivers who claim to
+  be on 2+ distinct trips inside a 5-min window (account sharing,
+  multi-apping without ending the prior trip).
 """
 
 from __future__ import annotations
 
 from rides_telemetry.gold.active_trips import stream_active_trips_mart
 from rides_telemetry.gold.demand import stream_demand_mart
+from rides_telemetry.gold.fraud_dual_trip import stream_fraud_dual_trip_mart
+from rides_telemetry.gold.fraud_teleport import stream_fraud_teleport_mart
 from rides_telemetry.gold.schemas import (
     GOLD_ACTIVE_TRIPS_SCHEMA,
     GOLD_ACTIVE_TRIPS_TABLE,
     GOLD_DEMAND_SCHEMA,
     GOLD_DEMAND_TABLE,
+    GOLD_FRAUD_DUAL_TRIP_SCHEMA,
+    GOLD_FRAUD_DUAL_TRIP_TABLE,
+    GOLD_FRAUD_TELEPORT_SCHEMA,
+    GOLD_FRAUD_TELEPORT_TABLE,
 )
 from rides_telemetry.gold.streaming import GoldStreamConfig
 
@@ -40,7 +52,13 @@ __all__ = [
     "GOLD_ACTIVE_TRIPS_TABLE",
     "GOLD_DEMAND_SCHEMA",
     "GOLD_DEMAND_TABLE",
+    "GOLD_FRAUD_DUAL_TRIP_SCHEMA",
+    "GOLD_FRAUD_DUAL_TRIP_TABLE",
+    "GOLD_FRAUD_TELEPORT_SCHEMA",
+    "GOLD_FRAUD_TELEPORT_TABLE",
     "GoldStreamConfig",
     "stream_active_trips_mart",
     "stream_demand_mart",
+    "stream_fraud_dual_trip_mart",
+    "stream_fraud_teleport_mart",
 ]

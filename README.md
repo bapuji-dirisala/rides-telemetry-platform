@@ -10,12 +10,12 @@ parallel Kinesis path), landed into a Delta lakehouse with exactly-once
 semantics, and served as geospatial gold marts for surge pricing, fraud
 detection, and driver-rider matching.
 
-> **Status:** Phase 5a — First gold marts shipped. Borough attribution
-> as a reusable Spark expression, `gold_active_trips_now` (per-borough
-> per-minute count of in-progress trips), and
-> `gold_demand_by_borough_5min` (tumbling 5-min windows with distinct
-> pings / trips / drivers) are all live. Fraud signals land in 5b,
-> then H3 hex zones replace nearest-centroid attribution in Phase 6.
+> **Status:** Phase 5b — Fraud detection marts shipped. Reusable
+> Haversine Spark expression, `gold_fraud_teleport` (flags GPS ping
+> pairs whose implied speed exceeds 200 km/h), and
+> `gold_fraud_dual_trip` (flags drivers reporting from 2+ distinct
+> trips inside a 5-min window) join the Phase 5a operational marts.
+> H3 hex zones (Phase 6) replace nearest-centroid attribution next.
 > Twelve-phase roadmap below; every phase gets a dedicated design doc
 > under [`docs/`](docs/).
 
@@ -79,7 +79,7 @@ Detailed component topology, ADRs, and design principles land in
 | 4a | Silver streaming — dedup, quality filter, trip fact fold | ✅ done | [docs/phase-04-silver-streaming.md](docs/phase-04-silver-streaming.md) |
 | 4b | Silver streaming — stream-stream join (GPS ⋈ trips) | ✅ done | [docs/phase-04b-silver-stream-join.md](docs/phase-04b-silver-stream-join.md) |
 | 5a | Gold marts — borough attribution + active trips + demand | ✅ done | [docs/phase-05-gold-marts.md](docs/phase-05-gold-marts.md) |
-| 5b | Gold marts — fraud signals (teleport, dual-trip driver) | ⏳ planned | |
+| 5b | Gold marts — fraud signals (teleport, dual-trip driver) | ✅ done | [docs/phase-05b-fraud-marts.md](docs/phase-05b-fraud-marts.md) |
 | 6 | Geospatial layer (H3 hex zones, distance SQL) | ⏳ planned | |
 | 7 | Kinesis alternative path (Firehose → S3 → Delta) | ⏳ planned | |
 | 8 | Terraform for AWS infra | ⏳ planned | |
@@ -160,21 +160,29 @@ python -m rides_telemetry.silver --stream matched --once -v
 # → lakehouse/warehouse/silver_gps_matched/     (pings ⋈ trip context)
 ```
 
-Aggregate matched pings into per-borough gold marts:
+Aggregate matched pings into per-borough gold marts + fraud alerts:
 
 ```bash
+# Phase 5a — operational marts
 python -m rides_telemetry.gold --mart active_trips --once -v
 python -m rides_telemetry.gold --mart demand_5min  --once -v
 # → lakehouse/warehouse/gold_active_trips_now/       (1-min per-borough snapshots)
 # → lakehouse/warehouse/gold_demand_by_borough_5min/ (5-min tumbling windows)
+
+# Phase 5b — fraud marts
+python -m rides_telemetry.gold --mart fraud_teleport   --once -v
+python -m rides_telemetry.gold --mart fraud_dual_trip  --once -v
+# → lakehouse/warehouse/gold_fraud_teleport/         (impossible-speed ping pairs)
+# → lakehouse/warehouse/gold_fraud_dual_trip/        (driver on 2+ trips in 5 min)
 ```
 
 Details in
 [`docs/phase-02-kafka-producer.md`](docs/phase-02-kafka-producer.md),
 [`docs/phase-03-bronze-streaming.md`](docs/phase-03-bronze-streaming.md),
 [`docs/phase-04-silver-streaming.md`](docs/phase-04-silver-streaming.md),
-[`docs/phase-04b-silver-stream-join.md`](docs/phase-04b-silver-stream-join.md), and
-[`docs/phase-05-gold-marts.md`](docs/phase-05-gold-marts.md).
+[`docs/phase-04b-silver-stream-join.md`](docs/phase-04b-silver-stream-join.md),
+[`docs/phase-05-gold-marts.md`](docs/phase-05-gold-marts.md), and
+[`docs/phase-05b-fraud-marts.md`](docs/phase-05b-fraud-marts.md).
 
 ## Two operating modes
 
