@@ -1,16 +1,20 @@
 """``python -m rides_telemetry.gold`` — run a gold mart streaming job.
 
-Four marts after Phase 5b. Pick one with ``--mart``:
+Six marts after Phase 6. Pick one with ``--mart``:
 
 .. code-block:: bash
 
-    # Operational marts (Phase 5a)
+    # Operational marts — borough level (Phase 5a)
     python -m rides_telemetry.gold --mart active_trips  -v
     python -m rides_telemetry.gold --mart demand_5min   --once -v
 
     # Fraud marts (Phase 5b)
     python -m rides_telemetry.gold --mart fraud_teleport   --once -v
     python -m rides_telemetry.gold --mart fraud_dual_trip  --once -v
+
+    # Operational marts — H3 hex level (Phase 6)
+    python -m rides_telemetry.gold --mart active_trips_h3 --once -v
+    python -m rides_telemetry.gold --mart demand_h3_5min  --once -v
 
     # Point at a non-default warehouse
     python -m rides_telemetry.gold --mart active_trips \
@@ -27,7 +31,9 @@ import sys
 from pathlib import Path
 
 from rides_telemetry.gold.active_trips import stream_active_trips_mart
+from rides_telemetry.gold.active_trips_h3 import stream_active_trips_h3_mart
 from rides_telemetry.gold.demand import stream_demand_mart
+from rides_telemetry.gold.demand_h3 import stream_demand_h3_mart
 from rides_telemetry.gold.fraud_dual_trip import stream_fraud_dual_trip_mart
 from rides_telemetry.gold.fraud_teleport import stream_fraud_teleport_mart
 from rides_telemetry.gold.streaming import GoldStreamConfig
@@ -47,7 +53,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--mart",
         required=True,
-        choices=["active_trips", "demand_5min", "fraud_teleport", "fraud_dual_trip"],
+        choices=[
+            "active_trips",
+            "demand_5min",
+            "fraud_teleport",
+            "fraud_dual_trip",
+            "active_trips_h3",
+            "demand_h3_5min",
+        ],
         help="Which gold mart to build.",
     )
     p.add_argument(
@@ -95,6 +108,8 @@ def main(argv: list[str] | None = None) -> int:
         "demand_5min": stream_demand_mart,
         "fraud_teleport": stream_fraud_teleport_mart,
         "fraud_dual_trip": stream_fraud_dual_trip_mart,
+        "active_trips_h3": stream_active_trips_h3_mart,
+        "demand_h3_5min": stream_demand_h3_mart,
     }
     query = runners[args.mart](spark, stream_config, await_termination=True)
 

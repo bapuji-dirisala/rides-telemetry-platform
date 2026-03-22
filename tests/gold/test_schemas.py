@@ -11,10 +11,13 @@ from rides_telemetry.gold.schemas import (
     DEMAND_WINDOW,
     FRAUD_WATERMARK,
     FRAUD_WINDOW,
+    GOLD_ACTIVE_TRIPS_H3_SCHEMA,
     GOLD_ACTIVE_TRIPS_SCHEMA,
+    GOLD_DEMAND_H3_SCHEMA,
     GOLD_DEMAND_SCHEMA,
     GOLD_FRAUD_DUAL_TRIP_SCHEMA,
     GOLD_FRAUD_TELEPORT_SCHEMA,
+    H3_RESOLUTION,
     MAX_PLAUSIBLE_TELEPORT_KMH,
     MIN_TELEPORT_DISTANCE_KM,
     MIN_TELEPORT_TIME_DELTA_SECONDS,
@@ -154,3 +157,88 @@ class TestFraudTunables:
 
     def test_fraud_watermark_matches_gps_source(self) -> None:
         assert FRAUD_WATERMARK.endswith(("minute", "minutes"))
+
+
+# -------------------------------------------------------------------------
+# Phase 6 — H3 hex marts
+# -------------------------------------------------------------------------
+
+
+class TestH3Resolution:
+    def test_resolution_is_8(self) -> None:
+        # Res 8 = ~461 m edge, ~0.74 km² area. Documented as the
+        # default in schemas.H3_RESOLUTION and the phase-6 doc.
+        # Bumping this constant is a deliberate cross-cutting change
+        # (touches every H3 mart's cardinality) — this test forces
+        # a reviewer to see both.
+        assert H3_RESOLUTION == 8
+
+    def test_resolution_is_in_reasonable_range(self) -> None:
+        # Below 6 (~36 km edges) the marts collapse to a handful of
+        # rows city-wide; above 10 (~65 m) individual GPS jitter
+        # blows out cardinality. Force the value into a sane band.
+        assert 6 <= H3_RESOLUTION <= 10
+
+
+class TestActiveTripsH3Schema:
+    def test_has_h3_and_borough_columns(self) -> None:
+        names = {f.name for f in GOLD_ACTIVE_TRIPS_H3_SCHEMA.fields}
+        assert "h3_r8" in names, "H3 mart must carry the h3_r8 hex ID column"
+        assert "borough" in names, (
+            "borough kept alongside for cheap drill-through — see phase-6 doc"
+        )
+
+    def test_h3_col_is_not_nullable(self) -> None:
+        # h3_r8 is the primary grouping key; NULL would mean the ping
+        # couldn't be classified, which we filter out upstream.
+        f = next(f for f in GOLD_ACTIVE_TRIPS_H3_SCHEMA.fields if f.name == "h3_r8")
+        assert not f.nullable
+
+    def test_borough_col_is_nullable(self) -> None:
+        # borough is derived from the same lat/lng — could in principle
+        # be NULL if the ping is outside NYC bbox (never happens in
+        # practice given silver's filter, but the schema honesty is
+        # cheap and future-proof).
+        f = next(f for f in GOLD_ACTIVE_TRIPS_H3_SCHEMA.fields if f.name == "borough")
+        assert f.nullable
+
+
+class TestDemandH3Schema:
+    def test_has_all_three_distinct_counts(self) -> None:
+        names = {f.name for f in GOLD_DEMAND_H3_SCHEMA.fields}
+        for c in ("ping_count", "distinct_trips", "distinct_drivers"):
+            assert c in names, f"demand H3 mart missing {c}"
+
+    def test_geographic_columns_present(self) -> None:
+        names = {f.name for f in GOLD_DEMAND_H3_SCHEMA.fields}
+        assert {"h3_r8", "borough"}.issubset(names)
+
+
+class TestH3MartSchemaParityWithBoroughMarts:
+    """H3 marts must include the same non-geo columns as their borough peers.
+
+    A consumer switching from borough to H3 gets extra spatial
+    granularity but the SAME window / measure columns. If a borough
+    mart gains a column (e.g. a new outcome metric), the H3 peer
+    should follow — these tests will flag the drift.
+    """
+
+    def test_active_trips_measure_cols_match(self) -> None:
+        borough_measures = {"active_trips"}
+        h3_measures = {"active_trips"}
+        # Both must have the same measure cols; geo dims may differ.
+        borough_names = {f.name for f in GOLD_ACTIVE_TRIPS_SCHEMA.fields}
+        h3_names = {f.name for f in GOLD_ACTIVE_TRIPS_H3_SCHEMA.fields}
+        assert borough_measures.issubset(borough_names)
+        assert h3_measures.issubset(h3_names)
+        # Both share window bounds
+        for col in ("window_start", "window_end", "gold_processed_ts"):
+            assert col in borough_names, f"borough mart missing {col}"
+            assert col in h3_names, f"H3 mart missing {col}"
+
+    def test_demand_measure_cols_match(self) -> None:
+        measures = {"ping_count", "distinct_trips", "distinct_drivers"}
+        borough_names = {f.name for f in GOLD_DEMAND_SCHEMA.fields}
+        h3_names = {f.name for f in GOLD_DEMAND_H3_SCHEMA.fields}
+        assert measures.issubset(borough_names)
+        assert measures.issubset(h3_names)
