@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rides-telemetry-platform"
-version = "0.5.1"
+version = "0.6.0"
 description = "Real-time rides telemetry: Kafka + Kinesis streaming ingestion, Structured Streaming to Delta, geospatial gold marts, deployed on AWS + Databricks + Kubernetes."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -37,6 +37,16 @@ producer = [
 spark = [
     "pyspark==3.5.3",
     "delta-spark==3.2.1",
+    # pyspark itself doesn't pull in pandas / pyarrow — they're only
+    # required when using pandas_udf, which our H3 helper does.
+    # Pinning here so ``pip install '.[spark]'`` gives a working stack.
+    "pandas>=2.0",
+    "pyarrow>=17.0",
+    # H3 geospatial indexing — pushed through a pandas_udf in
+    # rides_telemetry.geo.spark.h3_index_of_expr. There's no native
+    # Java implementation of H3 in Spark; pandas_udf gives us
+    # vectorised (Arrow-batched) execution without a Java UDF.
+    "h3>=4.0,<5",
 ]
 aws = [
     "boto3>=1.35",

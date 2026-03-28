@@ -4,29 +4,28 @@ Kept separate from :mod:`~rides_telemetry.geo.nyc` (which is pure
 Python) so importing the geo package doesn't require pyspark on the
 path — event generation, tests, and the producer all work without it.
 
-The helpers here are pushed down into Spark SQL, so they execute
-inside Catalyst's generated Java code with no Python-UDF overhead.
-
-Future direction: in phase 6 this module gains ``h3_index_of_expr``
-using the ``uber-h3`` Java UDF, and the gold marts swap borough
-attribution for H3 hex zones with a one-line change. The interface
-is intentionally the same shape (a ``Column`` factory taking
-``lat_col`` / ``lng_col`` names).
+The Catalyst-native helpers (``borough_of_expr``, ``haversine_km_expr``)
+are pushed down into Spark SQL and execute inside Catalyst's generated
+Java code with no Python-UDF overhead. The one exception is
+``h3_index_of_expr``, which uses a vectorised ``pandas_udf`` because
+there is no native Java H3 implementation in the pyspark stack — see
+its docstring for the trade-off.
 """
 
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from functools import lru_cache
+from typing import Any, cast
 
+import h3
+import pandas as pd
+from pyspark.sql import Column
 from pyspark.sql import functions as F  # noqa: N812
+from pyspark.sql.functions import pandas_udf
 from pyspark.sql.types import StringType
 
 from rides_telemetry.geo.nyc import NYC_BBOX, NYC_BOROUGHS
-
-if TYPE_CHECKING:  # pragma: no cover
-    from pyspark.sql import Column
-
 
 # Earth's mean radius in km — the standard Haversine constant.
 _EARTH_RADIUS_KM = 6371.0088
@@ -134,3 +133,89 @@ def haversine_km_expr(
     # clamp is essentially free).
     a_clamped = F.least(a, F.lit(1.0))
     return F.lit(2.0 * _EARTH_RADIUS_KM) * F.asin(F.sqrt(a_clamped))
+
+
+# -------------------------------------------------------------------------
+# H3 hex indexing (uber-h3 python bindings via pandas_udf).
+# -------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=16)
+def _h3_udf(resolution: int) -> Any:
+    """Build (or fetch cached) a pandas_udf for a given H3 resolution.
+
+    The resolution is baked into the closure so pyspark can register
+    exactly one UDF per resolution used in the job. In practice we
+    only ever call with ``resolution=8`` (the phase-6 default), so
+    exactly one UDF gets registered per SparkSession.
+    """
+
+    # pyspark's ``pandas_udf`` decorator has notoriously loose stubs;
+    # mypy can't resolve the overload for the ``@pandas_udf(returnType)``
+    # form. We know at runtime this returns a ``UserDefinedFunctionLike``.
+    @pandas_udf(StringType())  # type: ignore[call-overload]
+    def _udf(lat: pd.Series, lng: pd.Series) -> pd.Series:
+        # h3-py v4 doesn't ship a vectorised scalar API, so this
+        # loops in Python inside the Arrow batch. For our demo scale
+        # (22k rows) that's <100 ms of overhead per batch; production
+        # workloads would swap this for the ``h3-pandas`` extension
+        # or a Sedona Java UDF.
+        out = []
+        for la, ln in zip(lat, lng, strict=True):
+            if pd.notna(la) and pd.notna(ln):
+                out.append(h3.latlng_to_cell(float(la), float(ln), resolution))
+            else:
+                out.append(None)
+        return pd.Series(out, dtype=object)
+
+    return _udf
+
+
+def h3_index_of_expr(
+    lat_col: str = "lat",
+    lng_col: str = "lng",
+    resolution: int = 8,
+) -> Column:
+    """Compute the H3 cell index for a ``(lat, lng)`` at a given resolution.
+
+    Returns a ``Column`` of ``StringType`` — H3 cell IDs are 15-char
+    hex strings (e.g. ``"882a100d67fffff"``). ``NULL`` in either
+    input propagates to ``NULL`` in the output.
+
+    Resolution reference (edge length, cell area):
+
+    ==========  =============  =============
+    Resolution  Edge length    Cell area
+    ==========  =============  =============
+    7           1.2 km         5.2 km²
+    8           461 m          0.74 km²   ← Phase 6 default
+    9           174 m          0.11 km²
+    10          65 m           15,000 m²
+    ==========  =============  =============
+
+    **Res 8 is the classic ride-hail default** — small enough to
+    resolve individual streets in Manhattan, large enough that
+    borough-scale queries hit thousands (not millions) of hexes.
+
+    **Why a ``pandas_udf`` and not a Catalyst-native expression?**
+    There is no pure-Spark implementation of H3. Alternatives:
+
+    - ``pandas_udf`` (this) — Arrow-batched, ~0-copy across the
+      JVM boundary. Python-loop overhead is bounded by the batch
+      size (~10k rows/batch by default).
+    - Java UDF from Apache Sedona (``ST_H3CellIDs``) — fastest,
+      but adds Sedona as a Maven/JAR dependency and shifts the
+      whole geospatial stack to Sedona conventions.
+    - Regular ``udf`` — slower than ``pandas_udf`` by 10-50× due
+      to per-row serialisation overhead.
+
+    ``pandas_udf`` is the right point on the trade-off curve for a
+    demo lakehouse; Sedona would be the production choice.
+
+    **Why the memoized factory?** pyspark registers a UDF into the
+    session on first use. Recreating the ``pandas_udf`` on every
+    ``h3_index_of_expr`` call would leak session state; the
+    ``@lru_cache`` ensures we register exactly one UDF per unique
+    ``resolution`` value.
+    """
+    return cast(Column, _h3_udf(resolution)(F.col(lat_col), F.col(lng_col)))
