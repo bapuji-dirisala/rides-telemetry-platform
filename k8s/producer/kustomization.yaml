@@ -1,0 +1,15 @@
+---
+# `kubectl apply -k k8s/producer/` applies everything in order.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rides
+resources:
+  - service.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - hpa.yaml
+commonLabels:
+  app.kubernetes.io/part-of: rides-telemetry
+images:
+  - name: ghcr.io/bapuji-dirisala/rides-telemetry-producer
+    newTag: "0.6.0"

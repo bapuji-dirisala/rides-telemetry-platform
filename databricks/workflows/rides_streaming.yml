@@ -1,0 +1,65 @@
+# Databricks Workflow — rides streaming medallion.
+#
+# Deploy with `databricks bundle deploy -t dev` after wiring secrets.
+# Three jobs chained by task dependencies so bronze completes before
+# silver reads it, silver before gold.
+
+bundle:
+  name: rides-telemetry
+
+targets:
+  dev:
+    workspace:
+      host: ${env:DATABRICKS_HOST}
+    default: true
+    variables:
+      catalog: rides_dev
+      lakehouse_root: s3://rides-dev-lakehouse-${env:SUFFIX}/warehouse
+  prod:
+    workspace:
+      host: ${env:DATABRICKS_HOST_PROD}
+    variables:
+      catalog: rides_prod
+      lakehouse_root: s3://rides-prod-lakehouse-${env:SUFFIX}/warehouse
+
+resources:
+  jobs:
+    rides_medallion:
+      name: rides-medallion-${bundle.target}
+      max_concurrent_runs: 1
+      email_notifications:
+        on_failure:
+          - oncall@example.com
+      tasks:
+        - task_key: bronze_gps
+          notebook_task:
+            notebook_path: ../notebooks/bronze_gps
+          job_cluster_key: streaming_cluster
+        - task_key: bronze_trips
+          notebook_task:
+            notebook_path: ../notebooks/bronze_trips
+          job_cluster_key: streaming_cluster
+        - task_key: silver_matched
+          depends_on:
+            - task_key: bronze_gps
+            - task_key: bronze_trips
+          notebook_task:
+            notebook_path: ../notebooks/silver_matched
+          job_cluster_key: streaming_cluster
+        - task_key: gold_h3
+          depends_on:
+            - task_key: silver_matched
+          notebook_task:
+            notebook_path: ../notebooks/gold_h3
+          job_cluster_key: streaming_cluster
+      job_clusters:
+        - job_cluster_key: streaming_cluster
+          new_cluster:
+            spark_version: 14.3.x-scala2.12
+            node_type_id: i3.xlarge
+            num_workers: 2
+            data_security_mode: SINGLE_USER
+            runtime_engine: PHOTON
+            spark_conf:
+              "spark.databricks.delta.schema.autoMerge.enabled": "false"
+              "spark.sql.streaming.schemaInference": "true"

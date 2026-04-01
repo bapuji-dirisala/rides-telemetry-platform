@@ -1,0 +1,30 @@
+---
+# HPA keyed on consumer-lag-via-Prometheus-adapter. On local `kind`
+# this just means "no autoscaling" (the custom metrics API isn't
+# installed by default); in prod it scales 1–5 replicas based on how
+# far behind the downstream bronze streaming job is lagging.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rides-producer
+  namespace: rides
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rides-producer
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: rides_bronze_consumer_lag_messages
+        target:
+          type: AverageValue
+          averageValue: "10000"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+    scaleUp:
+      stabilizationWindowSeconds: 60

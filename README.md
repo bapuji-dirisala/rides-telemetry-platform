@@ -84,8 +84,8 @@ Detailed component topology, ADRs, and design principles land in
 | 6 | Geospatial layer (H3 hex zones, distance SQL) | ✅ done | [docs/phase-06-h3-hex-zones.md](docs/phase-06-h3-hex-zones.md) |
 | 7 | Kinesis alternative path (Firehose → S3 → Delta) | ✅ done | [docs/phase-07-08-kinesis-terraform.md](docs/phase-07-08-kinesis-terraform.md) |
 | 8 | Terraform for AWS infra | ✅ done | [docs/phase-07-08-kinesis-terraform.md](docs/phase-07-08-kinesis-terraform.md) |
-| 9 | Kubernetes producer deployment (`kind` + Helm) | ⏳ planned | |
-| 10 | Databricks Workflows + Unity Catalog | ⏳ planned | |
+| 9 | Kubernetes producer deployment (`kind` + Helm) | ✅ done | [docs/phase-09-10-k8s-databricks.md](docs/phase-09-10-k8s-databricks.md) |
+| 10 | Databricks Workflows + Unity Catalog | ✅ done | [docs/phase-09-10-k8s-databricks.md](docs/phase-09-10-k8s-databricks.md) |
 | 11 | Observability — Prometheus + Grafana | ⏳ planned | |
 | 12 | CI/CD — GitHub Actions + Jenkinsfile + docs polish | ⏳ planned | |
 
