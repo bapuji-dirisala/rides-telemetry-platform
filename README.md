@@ -10,14 +10,14 @@ parallel Kinesis path), landed into a Delta lakehouse with exactly-once
 semantics, and served as geospatial gold marts for surge pricing, fraud
 detection, and driver-rider matching.
 
-> **Status:** Phase 6 — H3 hex zones shipped. A vectorised
-> `h3_index_of_expr` (Uber H3 v4 via `pandas_udf`) sits alongside
-> the borough helper, and two parallel gold marts —
-> `gold_active_trips_h3_now` and `gold_demand_by_h3_5min` — publish
-> the same signals at **res-8 (~461 m edge, ~0.74 km² area)**
-> granularity, so surge/matching services get street-scale precision
-> without giving up the coarse borough views for BI dashboards.
-> Twelve-phase roadmap below; every phase gets a dedicated design doc
+> **Status (2026-10-25):** All 12 phases shipped. Kinesis Firehose
+> alternative path (Phase 7), Terraform AWS infra with LocalStack
+> dual-mode (Phase 8), hardened Kubernetes producer with HPA on
+> consumer lag (Phase 9), Databricks Workflows + Unity Catalog
+> three-level namespace with row-filter grants (Phase 10),
+> Prometheus + Grafana + SLO alerts (Phase 11), Jenkins declarative
+> pipeline mirroring GHA + terraform validate workflow (Phase 12).
+> Twelve-phase roadmap below; every phase has a dedicated design doc
 > under [`docs/`](docs/).
 
 ## What this project demonstrates
@@ -86,8 +86,8 @@ Detailed component topology, ADRs, and design principles land in
 | 8 | Terraform for AWS infra | ✅ done | [docs/phase-07-08-kinesis-terraform.md](docs/phase-07-08-kinesis-terraform.md) |
 | 9 | Kubernetes producer deployment (`kind` + Helm) | ✅ done | [docs/phase-09-10-k8s-databricks.md](docs/phase-09-10-k8s-databricks.md) |
 | 10 | Databricks Workflows + Unity Catalog | ✅ done | [docs/phase-09-10-k8s-databricks.md](docs/phase-09-10-k8s-databricks.md) |
-| 11 | Observability — Prometheus + Grafana | ⏳ planned | |
-| 12 | CI/CD — GitHub Actions + Jenkinsfile + docs polish | ⏳ planned | |
+| 11 | Observability — Prometheus + Grafana | ✅ done | [docs/phase-11-12-observability-cicd.md](docs/phase-11-12-observability-cicd.md) |
+| 12 | CI/CD — GitHub Actions + Jenkinsfile + docs polish | ✅ done | [docs/phase-11-12-observability-cicd.md](docs/phase-11-12-observability-cicd.md) |
 
 ## Tech stack (target)
 
