@@ -27,7 +27,7 @@ jobs:
       - name: install dev deps
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,generator,producer]"
+          pip install -e ".[dev,generator,producer,spark]"
 
       - name: ruff check
         run: ruff check .
@@ -50,10 +50,13 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: install package with dev + generator + producer extras
+      - name: install package with dev + generator + producer + spark extras
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,generator,producer]"
+          pip install -e ".[dev,generator,producer,spark]"
 
+      # Spark tests are deselected by default via the pyproject marker
+      # filter — they need a JDK. To exercise them, add a separate job
+      # with actions/setup-java and ``pytest -m spark``.
       - name: pytest
         run: pytest -q

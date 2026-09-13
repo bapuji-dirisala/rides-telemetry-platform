@@ -10,10 +10,10 @@ parallel Kinesis path), landed into a Delta lakehouse with exactly-once
 semantics, and served as geospatial gold marts for surge pricing, fraud
 detection, and driver-rider matching.
 
-> **Status:** Phase 2 — Kafka producer shipped. Local Redpanda + a
-> producer that streams real NYC TLC events onto two versioned topics
-> with production-shaped delivery guarantees. Twelve-phase roadmap
-> below; every phase gets a dedicated design doc under [`docs/`](docs/).
+> **Status:** Phase 3 — Bronze streaming shipped. Kafka → Delta via
+> Spark Structured Streaming with exactly-once checkpointing; the first
+> layer of the lakehouse is live. Twelve-phase roadmap below; every
+> phase gets a dedicated design doc under [`docs/`](docs/).
 
 ## What this project demonstrates
 
@@ -71,7 +71,7 @@ Detailed component topology, ADRs, and design principles land in
 | 0 | Repo scaffolding, tooling, CI | ✅ done | [docs/phase-00-scaffolding.md](docs/phase-00-scaffolding.md) |
 | 1 | Ride event generator (real NYC TLC data) | ✅ done | [docs/phase-01-event-generator.md](docs/phase-01-event-generator.md) |
 | 2 | Kafka producer (Redpanda local) | ✅ done | [docs/phase-02-kafka-producer.md](docs/phase-02-kafka-producer.md) |
-| 3 | Bronze streaming — Kafka → Delta | ⏳ planned | |
+| 3 | Bronze streaming — Kafka → Delta | ✅ done | [docs/phase-03-bronze-streaming.md](docs/phase-03-bronze-streaming.md) |
 | 4 | Silver streaming — watermarks, dedup, stateful joins | ⏳ planned | |
 | 5 | Gold real-time marts (surge, fraud, active trips) | ⏳ planned | |
 | 6 | Geospatial layer (H3 hex zones, distance SQL) | ⏳ planned | |
@@ -105,11 +105,12 @@ Requires Python 3.11+. Streaming phases will additionally require a JDK
 as prerequisites in their respective phase docs.
 
 ```bash
+brew install openjdk@17          # macOS; Ubuntu: apt install openjdk-17-jdk
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev,generator,producer]"
+pip install -e ".[dev,generator,producer,spark]"
 pre-commit install
-pytest
+pytest                            # fast, hermetic (Spark + integration tests skipped)
 ```
 
 Peek at real ride events streaming through the generator:
@@ -133,8 +134,17 @@ python -m rides_telemetry.producer \
 open http://localhost:8080                       # Redpanda Console
 ```
 
+Land it in the bronze Delta layer via Spark Structured Streaming:
+
+```bash
+python -m rides_telemetry.bronze --topic gps   --once -v
+python -m rides_telemetry.bronze --topic trips --once -v
+# → lakehouse/warehouse/bronze_rides_{gps,lifecycle}/  (Delta tables)
+```
+
 Details in
-[`docs/phase-02-kafka-producer.md`](docs/phase-02-kafka-producer.md).
+[`docs/phase-02-kafka-producer.md`](docs/phase-02-kafka-producer.md) and
+[`docs/phase-03-bronze-streaming.md`](docs/phase-03-bronze-streaming.md).
 
 ## Two operating modes
 
