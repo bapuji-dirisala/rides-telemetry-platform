@@ -8,6 +8,8 @@ streaming function, (3) tests, (4) a CLI switch — nothing more.
 from __future__ import annotations
 
 from pyspark.sql.types import (
+    ArrayType,
+    DoubleType,
     IntegerType,
     LongType,
     StringType,
@@ -22,6 +24,8 @@ from pyspark.sql.types import (
 
 GOLD_ACTIVE_TRIPS_TABLE = "gold_active_trips_now"
 GOLD_DEMAND_TABLE = "gold_demand_by_borough_5min"
+GOLD_FRAUD_TELEPORT_TABLE = "gold_fraud_teleport"
+GOLD_FRAUD_DUAL_TRIP_TABLE = "gold_fraud_dual_trip"
 
 
 # -------------------------------------------------------------------------
@@ -84,5 +88,123 @@ GOLD_DEMAND_SCHEMA: StructType = StructType(
         StructField("distinct_trips", LongType(), nullable=False),
         StructField("distinct_drivers", LongType(), nullable=False),
         StructField("gold_processed_ts", TimestampType(), nullable=False),
+    ]
+)
+
+
+# -------------------------------------------------------------------------
+# Fraud detection tunables. See ``docs/phase-05b-fraud-marts.md`` for the
+# reasoning behind each threshold.
+# -------------------------------------------------------------------------
+
+MAX_PLAUSIBLE_TELEPORT_KMH: float = 200.0
+"""Any implied speed between two consecutive pings above this is a
+teleport candidate.
+
+Matches the single-ping speed threshold in
+:data:`~rides_telemetry.silver.schemas.MAX_PLAUSIBLE_SPEED_KMH`, but
+applies to *movement between pings* rather than a single reported
+value. Even highway driving in NYC caps out well below 200 km/h; a
+higher implied speed almost always means either a GPS spoof or a
+driver swapping devices mid-trip."""
+
+MIN_TELEPORT_TIME_DELTA_SECONDS: float = 1.0
+"""Ignore ping pairs closer together than this.
+
+Set at the realistic minimum device ping cadence (1 s). Sub-second
+gaps almost always mean the device re-emitted the same GPS fix,
+so the derived "speed" is meaningless.
+
+Note: this is deliberately *not* set higher (e.g. 5 s) because a
+shorter time delta actually makes a large displacement *more*
+implausible — a teleport-scale jump between two pings 1 s apart is
+one of the strongest fraud signals we can catch. The jitter class
+is handled by :data:`MIN_TELEPORT_DISTANCE_KM`, not by this guard."""
+
+MIN_TELEPORT_DISTANCE_KM: float = 0.5
+"""Ignore ping pairs closer together than this (500 m).
+
+Two pings that are essentially co-located ("driver stopped at a
+light and GPS drifted 100 m") aren't fraud, no matter what the
+implied speed is. Requiring a real distance jump removes the
+stationary-jitter false-positive class.
+
+This is the primary jitter defense; the time-delta guard is a
+secondary sanity check against duplicated GPS emissions."""
+
+FRAUD_WINDOW: str = "5 minutes"
+"""Tumbling window for the dual-trip fraud mart.
+
+5 minutes matches the demand mart window so operators can join
+fraud alerts against demand context (was this driver a large share
+of a borough's supply?). Long enough to catch a driver actively
+juggling two trips; short enough that a legitimate back-to-back
+handoff (trip 1 ends, trip 2 starts 30 s later) doesn't trigger."""
+
+FRAUD_WATERMARK: str = "10 minutes"
+"""Late-arrival tolerance for fraud aggregations.
+
+Same as :data:`~rides_telemetry.silver.schemas.GPS_WATERMARK` — a
+ping that survived silver is eligible for fraud analysis up to
+10 min after its event_ts."""
+
+
+# -------------------------------------------------------------------------
+# gold_fraud_teleport — one row per suspicious ping pair.
+#
+# Non-aggregated: every flagged (prev_ping → curr_ping) pair is
+# emitted as its own row so operators can pivot on driver, trip, or
+# time. Downstream summarisation (e.g. "top 10 offending drivers this
+# hour") is a cheap SQL rollup.
+# -------------------------------------------------------------------------
+
+GOLD_FRAUD_TELEPORT_SCHEMA: StructType = StructType(
+    [
+        # Identity of the flagged ping (the "current" one in the pair)
+        StructField("event_id", StringType(), nullable=False),
+        StructField("event_ts", TimestampType(), nullable=False),
+        StructField("driver_id", StringType(), nullable=False),
+        StructField("trip_id", StringType(), nullable=False),
+        # Previous ping in this driver's stream
+        StructField("prev_event_id", StringType(), nullable=False),
+        StructField("prev_event_ts", TimestampType(), nullable=False),
+        StructField("prev_trip_id", StringType(), nullable=False),
+        # Geometry
+        StructField("lat", DoubleType(), nullable=False),
+        StructField("lng", DoubleType(), nullable=False),
+        StructField("prev_lat", DoubleType(), nullable=False),
+        StructField("prev_lng", DoubleType(), nullable=False),
+        # Derived signal
+        StructField("distance_km", DoubleType(), nullable=False),
+        StructField("time_delta_seconds", DoubleType(), nullable=False),
+        StructField("implied_speed_kmh", DoubleType(), nullable=False),
+        # Ops
+        StructField("flagged_ts", TimestampType(), nullable=False),
+    ]
+)
+
+
+# -------------------------------------------------------------------------
+# gold_fraud_dual_trip — one row per (driver_id, window) where a
+# driver was seen on 2+ distinct trip_ids inside the same 5-min
+# tumbling window. Includes the sample trip IDs so an operator can
+# jump straight to the offending trips without a follow-up query.
+# -------------------------------------------------------------------------
+
+GOLD_FRAUD_DUAL_TRIP_SCHEMA: StructType = StructType(
+    [
+        StructField("window_start", TimestampType(), nullable=False),
+        StructField("window_end", TimestampType(), nullable=False),
+        StructField("driver_id", StringType(), nullable=False),
+        StructField("concurrent_trip_count", IntegerType(), nullable=False),
+        # Bounded sample — one operator glance shouldn't need to
+        # follow up with a "which trips?" query. Capped at 5 so the
+        # cell stays readable in a BI tool.
+        StructField(
+            "sample_trip_ids",
+            ArrayType(StringType(), containsNull=False),
+            nullable=False,
+        ),
+        StructField("flagged_ts", TimestampType(), nullable=False),
     ]
 )
