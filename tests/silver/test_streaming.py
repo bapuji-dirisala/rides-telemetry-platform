@@ -19,7 +19,12 @@ import pytest
 
 from rides_telemetry.bronze.schemas import BRONZE_GPS_SCHEMA, BRONZE_TRIPS_SCHEMA
 from rides_telemetry.silver.gps import shape_silver_gps
-from rides_telemetry.silver.schemas import SILVER_GPS_SCHEMA
+from rides_telemetry.silver.matched import shape_matched
+from rides_telemetry.silver.schemas import (
+    SILVER_GPS_SCHEMA,
+    SILVER_MATCHED_SCHEMA,
+    SILVER_TRIPS_SCHEMA,
+)
 from rides_telemetry.silver.trips import shape_trip_facts_batch
 from rides_telemetry.spark import SparkSessionConfig, build_spark_session
 
@@ -319,3 +324,284 @@ class TestTripFactsShaping:
         assert rows["B"]["status"] == "PENDING"
         assert rows["A"]["driver_id"] == "dA"
         assert rows["B"]["driver_id"] is None
+
+
+# -------------------------------------------------------------------------
+# Silver matched (stream-stream join)
+#
+# We exercise ``shape_matched`` against static DataFrames. In batch
+# mode watermarks are no-ops and the streaming state store isn't used,
+# so this covers the join predicate, filter, and projection — the
+# actual streaming semantics (state eviction, incremental emit) are
+# Spark's responsibility and are exercised by the end-to-end run
+# documented in the phase doc.
+# -------------------------------------------------------------------------
+
+
+def _silver_gps_row(
+    event_id: str,
+    trip_id: str,
+    driver_id: str,
+    event_ts: dt.datetime,
+    lat: float = 40.75,
+    lng: float = -73.98,
+    speed_kmh: float | None = 25.0,
+) -> dict:
+    return {
+        "event_id": event_id,
+        "event_ts": event_ts,
+        "trip_id": trip_id,
+        "driver_id": driver_id,
+        "lat": lat,
+        "lng": lng,
+        "speed_kmh": speed_kmh,
+        "heading_deg": 90.0,
+        "accuracy_m": 5.0,
+        "ingest_ts": event_ts,
+        "silver_processed_ts": event_ts,
+    }
+
+
+def _silver_trip_row(
+    trip_id: str,
+    rider_id: str,
+    driver_id: str | None,
+    status: str,
+    started_ts: dt.datetime | None,
+    ended_ts: dt.datetime | None = None,
+    cancelled_ts: dt.datetime | None = None,
+    requested_ts: dt.datetime | None = None,
+    last_event_ts: dt.datetime | None = None,
+) -> dict:
+    return {
+        "trip_id": trip_id,
+        "rider_id": rider_id,
+        "driver_id": driver_id,
+        "requested_ts": requested_ts or started_ts,
+        "accepted_ts": started_ts,
+        "started_ts": started_ts,
+        "ended_ts": ended_ts,
+        "cancelled_ts": cancelled_ts,
+        "pickup_lat": 40.75,
+        "pickup_lng": -73.98,
+        "dropoff_lat": 40.68,
+        "dropoff_lng": -73.94,
+        "trip_distance_km": None,
+        "fare_amount_usd": None,
+        "cancelled_by": None,
+        "status": status,
+        "first_event_ts": requested_ts or started_ts,
+        "last_event_ts": last_event_ts or ended_ts or started_ts,
+        "silver_processed_ts": started_ts,
+    }
+
+
+class TestMatchedJoin:
+    def test_output_schema_matches_matched_spec(self, spark: SparkSession) -> None:
+        gps = spark.createDataFrame(
+            [_silver_gps_row("e1", "A", "d1", _T0 + dt.timedelta(minutes=1))],
+            schema=SILVER_GPS_SCHEMA,
+        )
+        trips = spark.createDataFrame(
+            [
+                _silver_trip_row(
+                    "A",
+                    "r1",
+                    "d1",
+                    "COMPLETED",
+                    started_ts=_T0,
+                    ended_ts=_T0 + dt.timedelta(minutes=15),
+                )
+            ],
+            schema=SILVER_TRIPS_SCHEMA,
+        )
+        matched = shape_matched(gps, trips)
+        expected = [f.name for f in SILVER_MATCHED_SCHEMA.fields]
+        assert matched.schema.fieldNames() == expected
+
+    def test_ping_inside_window_matches(self, spark: SparkSession) -> None:
+        gps = spark.createDataFrame(
+            [
+                _silver_gps_row("mid-trip", "A", "d1", _T0 + dt.timedelta(minutes=5)),
+            ],
+            schema=SILVER_GPS_SCHEMA,
+        )
+        trips = spark.createDataFrame(
+            [
+                _silver_trip_row(
+                    "A",
+                    "r1",
+                    "d1",
+                    "COMPLETED",
+                    started_ts=_T0,
+                    ended_ts=_T0 + dt.timedelta(minutes=15),
+                )
+            ],
+            schema=SILVER_TRIPS_SCHEMA,
+        )
+        rows = shape_matched(gps, trips).collect()
+        assert len(rows) == 1
+        r = rows[0].asDict()
+        assert r["event_id"] == "mid-trip"
+        assert r["rider_id"] == "r1"
+        assert r["trip_status"] == "COMPLETED"
+        assert r["pickup_lat"] == 40.75
+
+    def test_ping_before_start_is_dropped(self, spark: SparkSession) -> None:
+        # 5 minutes before started_ts is well outside the 30s start slack.
+        gps = spark.createDataFrame(
+            [_silver_gps_row("before", "A", "d1", _T0 - dt.timedelta(minutes=5))],
+            schema=SILVER_GPS_SCHEMA,
+        )
+        trips = spark.createDataFrame(
+            [
+                _silver_trip_row(
+                    "A",
+                    "r1",
+                    "d1",
+                    "COMPLETED",
+                    started_ts=_T0,
+                    ended_ts=_T0 + dt.timedelta(minutes=15),
+                )
+            ],
+            schema=SILVER_TRIPS_SCHEMA,
+        )
+        assert shape_matched(gps, trips).count() == 0
+
+    def test_ping_within_start_slack_matches(self, spark: SparkSession) -> None:
+        # 10s before started_ts is inside the 30s start slack.
+        gps = spark.createDataFrame(
+            [_silver_gps_row("edge", "A", "d1", _T0 - dt.timedelta(seconds=10))],
+            schema=SILVER_GPS_SCHEMA,
+        )
+        trips = spark.createDataFrame(
+            [
+                _silver_trip_row(
+                    "A",
+                    "r1",
+                    "d1",
+                    "COMPLETED",
+                    started_ts=_T0,
+                    ended_ts=_T0 + dt.timedelta(minutes=15),
+                )
+            ],
+            schema=SILVER_TRIPS_SCHEMA,
+        )
+        assert shape_matched(gps, trips).count() == 1
+
+    def test_ping_within_end_slack_matches(self, spark: SparkSession) -> None:
+        # 3 minutes after ended_ts is inside the 5-minute end slack.
+        gps = spark.createDataFrame(
+            [
+                _silver_gps_row(
+                    "late",
+                    "A",
+                    "d1",
+                    _T0 + dt.timedelta(minutes=18),  # ended at min 15 + 3min slack
+                ),
+            ],
+            schema=SILVER_GPS_SCHEMA,
+        )
+        trips = spark.createDataFrame(
+            [
+                _silver_trip_row(
+                    "A",
+                    "r1",
+                    "d1",
+                    "COMPLETED",
+                    started_ts=_T0,
+                    ended_ts=_T0 + dt.timedelta(minutes=15),
+                )
+            ],
+            schema=SILVER_TRIPS_SCHEMA,
+        )
+        assert shape_matched(gps, trips).count() == 1
+
+    def test_ping_well_after_end_is_dropped(self, spark: SparkSession) -> None:
+        # 30 minutes after ended_ts is well outside the 5-minute slack.
+        gps = spark.createDataFrame(
+            [_silver_gps_row("far-after", "A", "d1", _T0 + dt.timedelta(minutes=45))],
+            schema=SILVER_GPS_SCHEMA,
+        )
+        trips = spark.createDataFrame(
+            [
+                _silver_trip_row(
+                    "A",
+                    "r1",
+                    "d1",
+                    "COMPLETED",
+                    started_ts=_T0,
+                    ended_ts=_T0 + dt.timedelta(minutes=15),
+                )
+            ],
+            schema=SILVER_TRIPS_SCHEMA,
+        )
+        assert shape_matched(gps, trips).count() == 0
+
+    def test_cancelled_trip_is_excluded(self, spark: SparkSession) -> None:
+        # A ping arriving inside what would have been the trip window,
+        # but the trip was cancelled — must NOT appear in matched.
+        gps = spark.createDataFrame(
+            [_silver_gps_row("orphan", "A", "d1", _T0 + dt.timedelta(minutes=1))],
+            schema=SILVER_GPS_SCHEMA,
+        )
+        trips = spark.createDataFrame(
+            [
+                _silver_trip_row(
+                    "A",
+                    "r1",
+                    "d1",
+                    "CANCELLED",
+                    started_ts=_T0,
+                    cancelled_ts=_T0 + dt.timedelta(minutes=2),
+                    last_event_ts=_T0 + dt.timedelta(minutes=2),
+                )
+            ],
+            schema=SILVER_TRIPS_SCHEMA,
+        )
+        assert shape_matched(gps, trips).count() == 0
+
+    def test_in_progress_trip_uses_last_event_ts_as_end(self, spark: SparkSession) -> None:
+        # Trip is still IN_PROGRESS (no ended_ts). The join predicate
+        # falls back to COALESCE(ended_ts, last_event_ts) + slack.
+        gps = spark.createDataFrame(
+            [_silver_gps_row("live", "A", "d1", _T0 + dt.timedelta(minutes=4))],
+            schema=SILVER_GPS_SCHEMA,
+        )
+        trips = spark.createDataFrame(
+            [
+                _silver_trip_row(
+                    "A",
+                    "r1",
+                    "d1",
+                    "IN_PROGRESS",
+                    started_ts=_T0,
+                    ended_ts=None,
+                    last_event_ts=_T0 + dt.timedelta(minutes=3),
+                )
+            ],
+            schema=SILVER_TRIPS_SCHEMA,
+        )
+        # Ping at min 4 is within last_event_ts (min 3) + 5min slack.
+        assert shape_matched(gps, trips).count() == 1
+
+    def test_wrong_trip_id_is_dropped(self, spark: SparkSession) -> None:
+        # Ping's trip_id doesn't match any trip — inner join drops it.
+        gps = spark.createDataFrame(
+            [_silver_gps_row("orphan", "MISSING", "d1", _T0 + dt.timedelta(minutes=1))],
+            schema=SILVER_GPS_SCHEMA,
+        )
+        trips = spark.createDataFrame(
+            [
+                _silver_trip_row(
+                    "A",
+                    "r1",
+                    "d1",
+                    "COMPLETED",
+                    started_ts=_T0,
+                    ended_ts=_T0 + dt.timedelta(minutes=15),
+                )
+            ],
+            schema=SILVER_TRIPS_SCHEMA,
+        )
+        assert shape_matched(gps, trips).count() == 0
