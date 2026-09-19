@@ -28,6 +28,10 @@ if TYPE_CHECKING:  # pragma: no cover
     from pyspark.sql import Column
 
 
+# Earth's mean radius in km — the standard Haversine constant.
+_EARTH_RADIUS_KM = 6371.0088
+
+
 # Precomputed conversion factors — 1° lat is ~111 km everywhere;
 # 1° lng shrinks with latitude and at NYC (~40.7°N) is ~84 km.
 # Squaring these on the difference gives a scaled-Euclidean distance
@@ -80,3 +84,53 @@ def borough_of_expr(lat_col: str = "lat", lng_col: str = "lng") -> Column:
     min_lat, min_lng, max_lat, max_lng = NYC_BBOX
     inside_bbox = lat.between(min_lat, max_lat) & lng.between(min_lng, max_lng)
     return F.when(inside_bbox, picked).otherwise(F.lit(None).cast(StringType()))
+
+
+def haversine_km_expr(
+    lat1_col: str,
+    lng1_col: str,
+    lat2_col: str,
+    lng2_col: str,
+) -> Column:
+    """Great-circle distance in km between two lat/lng points.
+
+    Standard Haversine formula, expressed in pure Spark SQL:
+
+    .. math::
+
+        a = \\sin^2\\left(\\tfrac{\\Delta\\phi}{2}\\right) +
+            \\cos(\\phi_1)\\cos(\\phi_2)\\sin^2\\left(\\tfrac{\\Delta\\lambda}{2}\\right)
+
+        d = 2R \\arcsin(\\sqrt{a})
+
+    where :math:`\\phi` is latitude in radians and :math:`\\lambda` is
+    longitude in radians. :math:`R = 6371.0088` km is Earth's mean
+    radius.
+
+    Used by :mod:`~rides_telemetry.gold.fraud_teleport` to compute
+    the implied speed between two consecutive pings. Kept as a
+    reusable helper because future marts (matching-quality, route
+    deviation) will need it too.
+
+    Why not just scaled-Euclidean like ``borough_of_expr``?
+    Borough classification only cares about *relative* distances
+    between centroids (nearest wins), so a scaled approximation is
+    fine. Fraud detection needs *absolute* distances that we then
+    divide by time to get km/h — the ~5% error at NYC latitude of
+    scaled-Euclidean would map straight into the fraud threshold
+    and produce false positives (or misses).
+    """
+    phi1 = F.radians(F.col(lat1_col))
+    phi2 = F.radians(F.col(lat2_col))
+    d_phi = F.radians(F.col(lat2_col) - F.col(lat1_col))
+    d_lambda = F.radians(F.col(lng2_col) - F.col(lng1_col))
+
+    a = F.pow(F.sin(d_phi / F.lit(2.0)), F.lit(2)) + (
+        F.cos(phi1) * F.cos(phi2) * F.pow(F.sin(d_lambda / F.lit(2.0)), F.lit(2))
+    )
+    # ``asin(sqrt(a))`` — clamp ``a`` at 1.0 to avoid domain errors
+    # from floating-point noise (a can be a tiny bit > 1.0 for
+    # antipodal points, which we'll never see for NYC pings but the
+    # clamp is essentially free).
+    a_clamped = F.least(a, F.lit(1.0))
+    return F.lit(2.0 * _EARTH_RADIUS_KM) * F.asin(F.sqrt(a_clamped))
