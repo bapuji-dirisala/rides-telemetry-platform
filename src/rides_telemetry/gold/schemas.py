@@ -26,6 +26,8 @@ GOLD_ACTIVE_TRIPS_TABLE = "gold_active_trips_now"
 GOLD_DEMAND_TABLE = "gold_demand_by_borough_5min"
 GOLD_FRAUD_TELEPORT_TABLE = "gold_fraud_teleport"
 GOLD_FRAUD_DUAL_TRIP_TABLE = "gold_fraud_dual_trip"
+GOLD_ACTIVE_TRIPS_H3_TABLE = "gold_active_trips_h3_now"
+GOLD_DEMAND_H3_TABLE = "gold_demand_by_h3_5min"
 
 
 # -------------------------------------------------------------------------
@@ -52,6 +54,29 @@ DEMAND_WATERMARK: str = "10 minutes"
 Matches silver_rides_gps' watermark — a ping that survived silver's
 dedup+quality filter is still eligible for demand aggregation up to
 10 min after its event_ts."""
+
+H3_RESOLUTION: int = 8
+"""Default H3 hex resolution for Phase 6 gold marts.
+
+Res 8 gives ~461 m hex edges and ~0.74 km² per cell — small enough
+to resolve individual streets in Manhattan, large enough that
+borough-scale queries hit thousands (not millions) of hexes.
+
+Reference:
+
+==========  =============  =============
+Resolution  Edge length    Cell area
+==========  =============  =============
+7           1.2 km         5.2 km²
+8           461 m          0.74 km²   ← default
+9           174 m          0.11 km²
+10          65 m           0.015 km²
+==========  =============  =============
+
+Bumping this to res 9 or 10 makes surge / matching decisions more
+precise but multiplies row counts in gold — a res-9 mart of the
+same window/borough footprint has ~7× more rows than res 8. The
+constant lives here so a reviewer sees the trade-off in one place."""
 
 
 # -------------------------------------------------------------------------
@@ -206,5 +231,45 @@ GOLD_FRAUD_DUAL_TRIP_SCHEMA: StructType = StructType(
             nullable=False,
         ),
         StructField("flagged_ts", TimestampType(), nullable=False),
+    ]
+)
+
+
+# -------------------------------------------------------------------------
+# Phase 6 — H3 hex-zone marts.
+#
+# Same aggregation logic as the Phase 5a borough marts, but the
+# geospatial dimension is an H3 res-8 cell instead of a nearest-
+# centroid borough. Every hex is entirely within one borough at
+# this resolution, so a per-borough rollup is a cheap SQL group-by
+# on top of these — but the reverse is not true, which is exactly
+# why H3 is a strict upgrade for surge / matching consumers.
+# -------------------------------------------------------------------------
+
+GOLD_ACTIVE_TRIPS_H3_SCHEMA: StructType = StructType(
+    [
+        StructField("window_start", TimestampType(), nullable=False),
+        StructField("window_end", TimestampType(), nullable=False),
+        # H3 cell IDs are 15-character lowercase hex strings.
+        StructField("h3_r8", StringType(), nullable=False),
+        # Borough kept alongside for cheap drill-through / BI rollups.
+        # Derived from the same ping's (lat, lng) via ``borough_of_expr``.
+        StructField("borough", StringType(), nullable=True),
+        StructField("active_trips", IntegerType(), nullable=False),
+        StructField("gold_processed_ts", TimestampType(), nullable=False),
+    ]
+)
+
+
+GOLD_DEMAND_H3_SCHEMA: StructType = StructType(
+    [
+        StructField("window_start", TimestampType(), nullable=False),
+        StructField("window_end", TimestampType(), nullable=False),
+        StructField("h3_r8", StringType(), nullable=False),
+        StructField("borough", StringType(), nullable=True),
+        StructField("ping_count", LongType(), nullable=False),
+        StructField("distinct_trips", LongType(), nullable=False),
+        StructField("distinct_drivers", LongType(), nullable=False),
+        StructField("gold_processed_ts", TimestampType(), nullable=False),
     ]
 )

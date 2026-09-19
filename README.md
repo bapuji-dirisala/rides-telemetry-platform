@@ -10,12 +10,13 @@ parallel Kinesis path), landed into a Delta lakehouse with exactly-once
 semantics, and served as geospatial gold marts for surge pricing, fraud
 detection, and driver-rider matching.
 
-> **Status:** Phase 5b — Fraud detection marts shipped. Reusable
-> Haversine Spark expression, `gold_fraud_teleport` (flags GPS ping
-> pairs whose implied speed exceeds 200 km/h), and
-> `gold_fraud_dual_trip` (flags drivers reporting from 2+ distinct
-> trips inside a 5-min window) join the Phase 5a operational marts.
-> H3 hex zones (Phase 6) replace nearest-centroid attribution next.
+> **Status:** Phase 6 — H3 hex zones shipped. A vectorised
+> `h3_index_of_expr` (Uber H3 v4 via `pandas_udf`) sits alongside
+> the borough helper, and two parallel gold marts —
+> `gold_active_trips_h3_now` and `gold_demand_by_h3_5min` — publish
+> the same signals at **res-8 (~461 m edge, ~0.74 km² area)**
+> granularity, so surge/matching services get street-scale precision
+> without giving up the coarse borough views for BI dashboards.
 > Twelve-phase roadmap below; every phase gets a dedicated design doc
 > under [`docs/`](docs/).
 
@@ -80,7 +81,7 @@ Detailed component topology, ADRs, and design principles land in
 | 4b | Silver streaming — stream-stream join (GPS ⋈ trips) | ✅ done | [docs/phase-04b-silver-stream-join.md](docs/phase-04b-silver-stream-join.md) |
 | 5a | Gold marts — borough attribution + active trips + demand | ✅ done | [docs/phase-05-gold-marts.md](docs/phase-05-gold-marts.md) |
 | 5b | Gold marts — fraud signals (teleport, dual-trip driver) | ✅ done | [docs/phase-05b-fraud-marts.md](docs/phase-05b-fraud-marts.md) |
-| 6 | Geospatial layer (H3 hex zones, distance SQL) | ⏳ planned | |
+| 6 | Geospatial layer (H3 hex zones, distance SQL) | ✅ done | [docs/phase-06-h3-hex-zones.md](docs/phase-06-h3-hex-zones.md) |
 | 7 | Kinesis alternative path (Firehose → S3 → Delta) | ⏳ planned | |
 | 8 | Terraform for AWS infra | ⏳ planned | |
 | 9 | Kubernetes producer deployment (`kind` + Helm) | ⏳ planned | |
@@ -174,6 +175,12 @@ python -m rides_telemetry.gold --mart fraud_teleport   --once -v
 python -m rides_telemetry.gold --mart fraud_dual_trip  --once -v
 # → lakehouse/warehouse/gold_fraud_teleport/         (impossible-speed ping pairs)
 # → lakehouse/warehouse/gold_fraud_dual_trip/        (driver on 2+ trips in 5 min)
+
+# Phase 6 — H3 hex-zone marts (res 8, ~461 m edges)
+python -m rides_telemetry.gold --mart active_trips_h3 --once -v
+python -m rides_telemetry.gold --mart demand_h3_5min  --once -v
+# → lakehouse/warehouse/gold_active_trips_h3_now/    (per-hex 1-min snapshots)
+# → lakehouse/warehouse/gold_demand_by_h3_5min/      (per-hex 5-min tumbling)
 ```
 
 Details in
@@ -181,8 +188,9 @@ Details in
 [`docs/phase-03-bronze-streaming.md`](docs/phase-03-bronze-streaming.md),
 [`docs/phase-04-silver-streaming.md`](docs/phase-04-silver-streaming.md),
 [`docs/phase-04b-silver-stream-join.md`](docs/phase-04b-silver-stream-join.md),
-[`docs/phase-05-gold-marts.md`](docs/phase-05-gold-marts.md), and
-[`docs/phase-05b-fraud-marts.md`](docs/phase-05b-fraud-marts.md).
+[`docs/phase-05-gold-marts.md`](docs/phase-05-gold-marts.md),
+[`docs/phase-05b-fraud-marts.md`](docs/phase-05b-fraud-marts.md), and
+[`docs/phase-06-h3-hex-zones.md`](docs/phase-06-h3-hex-zones.md).
 
 ## Two operating modes
 
