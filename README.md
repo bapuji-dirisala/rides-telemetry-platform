@@ -10,13 +10,13 @@ parallel Kinesis path), landed into a Delta lakehouse with exactly-once
 semantics, and served as geospatial gold marts for surge pricing, fraud
 detection, and driver-rider matching.
 
-> **Status:** Phase 4a — Silver layer (cleanup + trip facts) shipped.
-> Bronze GPS is deduped and quality-filtered into `silver_rides_gps`;
-> lifecycle events are folded into one row per trip with a derived
-> status in `silver_trip_facts` via `foreachBatch` + Delta `MERGE`. The
-> stream-stream join between the two lands in Phase 4b. Twelve-phase
-> roadmap below; every phase gets a dedicated design doc under
-> [`docs/`](docs/).
+> **Status:** Phase 4b — Silver stream-stream join shipped. Silver GPS
+> is joined against silver trip facts inside a bounded time window
+> (both sides watermarked) to produce `silver_gps_matched`: every
+> validated GPS ping enriched with its trip's rider/driver/pickup/
+> dropoff and status. Gold marts (surge, fraud, matching) build on
+> this directly. Twelve-phase roadmap below; every phase gets a
+> dedicated design doc under [`docs/`](docs/).
 
 ## What this project demonstrates
 
@@ -76,7 +76,7 @@ Detailed component topology, ADRs, and design principles land in
 | 2 | Kafka producer (Redpanda local) | ✅ done | [docs/phase-02-kafka-producer.md](docs/phase-02-kafka-producer.md) |
 | 3 | Bronze streaming — Kafka → Delta | ✅ done | [docs/phase-03-bronze-streaming.md](docs/phase-03-bronze-streaming.md) |
 | 4a | Silver streaming — dedup, quality filter, trip fact fold | ✅ done | [docs/phase-04-silver-streaming.md](docs/phase-04-silver-streaming.md) |
-| 4b | Silver streaming — stream-stream join (GPS ↔ trips) | ⏳ planned | |
+| 4b | Silver streaming — stream-stream join (GPS ⋈ trips) | ✅ done | [docs/phase-04b-silver-stream-join.md](docs/phase-04b-silver-stream-join.md) |
 | 5 | Gold real-time marts (surge, fraud, active trips) | ⏳ planned | |
 | 6 | Geospatial layer (H3 hex zones, distance SQL) | ⏳ planned | |
 | 7 | Kinesis alternative path (Firehose → S3 → Delta) | ⏳ planned | |
@@ -146,19 +146,23 @@ python -m rides_telemetry.bronze --topic trips --once -v
 # → lakehouse/warehouse/bronze_rides_{gps,lifecycle}/  (Delta tables)
 ```
 
-Promote bronze to silver (dedup + quality filter + trip-fact fold):
+Promote bronze to silver (dedup + quality filter + trip-fact fold),
+then join to enrich each ping with its trip context:
 
 ```bash
-python -m rides_telemetry.silver --stream gps   --once -v
-python -m rides_telemetry.silver --stream trips --once -v
+python -m rides_telemetry.silver --stream gps     --once -v
+python -m rides_telemetry.silver --stream trips   --once -v
+python -m rides_telemetry.silver --stream matched --once -v
 # → lakehouse/warehouse/silver_rides_gps/       (per-ping, deduped)
 # → lakehouse/warehouse/silver_trip_facts/      (one row per trip)
+# → lakehouse/warehouse/silver_gps_matched/     (pings ⋈ trip context)
 ```
 
 Details in
 [`docs/phase-02-kafka-producer.md`](docs/phase-02-kafka-producer.md),
-[`docs/phase-03-bronze-streaming.md`](docs/phase-03-bronze-streaming.md), and
-[`docs/phase-04-silver-streaming.md`](docs/phase-04-silver-streaming.md).
+[`docs/phase-03-bronze-streaming.md`](docs/phase-03-bronze-streaming.md),
+[`docs/phase-04-silver-streaming.md`](docs/phase-04-silver-streaming.md), and
+[`docs/phase-04b-silver-stream-join.md`](docs/phase-04b-silver-stream-join.md).
 
 ## Two operating modes
 
