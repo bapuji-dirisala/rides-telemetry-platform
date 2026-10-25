@@ -1,0 +1,14 @@
+---
+# Config is externalised so flipping between local Redpanda and MSK is
+# a one-line edit — no Deployment rollout triggered by env flips if we
+# use ``kubectl rollout restart deployment/rides-producer`` manually.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rides-producer-config
+  namespace: rides
+data:
+  kafka_bootstrap: "redpanda-0.redpanda.rides.svc.cluster.local:9092"
+  # Firehose output path for the Phase 7 Kinesis alternative — set when
+  # KAFKA_PATH=false to switch runtimes.
+  firehose_delivery_stream: "rides-local-rides-events"

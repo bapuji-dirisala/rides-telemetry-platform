@@ -1,0 +1,77 @@
+---
+# Producer Deployment — synthetic trip + GPS generator pushing to Kafka.
+#
+# Design decisions:
+# - Deployment (not Job) because the producer loops indefinitely in the
+#   steady-state. Rolling updates keep at least one producer live.
+# - 1 replica by default — scaling up multiplies the event stream, which
+#   is a dev-time knob. Prod uses an HPA keyed on Kafka lag (see hpa.yaml).
+# - Resource requests pinned so the Pod schedules deterministically on
+#   `kind` + a laptop.
+# - securityContext: non-root UID 10001, read-only root FS, drop all caps.
+#   Mirrors the Dockerfile USER line and the Pod Security Standards
+#   "restricted" profile.
+# - ServiceAccount wiring is in iam.yaml so IRSA (prod) and local
+#   service account (kind) share the same manifest shape.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rides-producer
+  namespace: rides
+  labels:
+    app.kubernetes.io/name: rides-producer
+    app.kubernetes.io/component: producer
+    app.kubernetes.io/part-of: rides-telemetry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rides-producer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rides-producer
+        app.kubernetes.io/component: producer
+    spec:
+      serviceAccountName: rides-producer
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: producer
+          image: ghcr.io/bapuji-dirisala/rides-telemetry-producer:0.6.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RIDES_KAFKA_BOOTSTRAP
+              valueFrom:
+                configMapKeyRef:
+                  name: rides-producer-config
+                  key: kafka_bootstrap
+            - name: RIDES_MONTH
+              value: "2024-01"
+            - name: RIDES_SEED
+              value: "42"
+            - name: RIDES_MAX_TRIPS
+              value: "0"  # 0 = loop forever
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      terminationGracePeriodSeconds: 30
