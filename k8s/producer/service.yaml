@@ -1,0 +1,37 @@
+---
+# Headless Service only — the producer has no inbound traffic.
+# This exposes the Prometheus metrics port for the Phase 11 scraper.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rides-producer
+  namespace: rides
+  labels:
+    app.kubernetes.io/name: rides-producer
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: rides-producer
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: 9100
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rides-producer
+  namespace: rides
+  annotations:
+    # In prod, swap this for the IAM role ARN that owns
+    # firehose:PutRecord* on the Phase 7 delivery stream.
+    eks.amazonaws.com/role-arn: "arn:aws:iam::REPLACE_ACCOUNT:role/rides-dev-producer"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rides
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
