@@ -82,8 +82,8 @@ Detailed component topology, ADRs, and design principles land in
 | 5a | Gold marts — borough attribution + active trips + demand | ✅ done | [docs/phase-05-gold-marts.md](docs/phase-05-gold-marts.md) |
 | 5b | Gold marts — fraud signals (teleport, dual-trip driver) | ✅ done | [docs/phase-05b-fraud-marts.md](docs/phase-05b-fraud-marts.md) |
 | 6 | Geospatial layer (H3 hex zones, distance SQL) | ✅ done | [docs/phase-06-h3-hex-zones.md](docs/phase-06-h3-hex-zones.md) |
-| 7 | Kinesis alternative path (Firehose → S3 → Delta) | ⏳ planned | |
-| 8 | Terraform for AWS infra | ⏳ planned | |
+| 7 | Kinesis alternative path (Firehose → S3 → Delta) | ✅ done | [docs/phase-07-08-kinesis-terraform.md](docs/phase-07-08-kinesis-terraform.md) |
+| 8 | Terraform for AWS infra | ✅ done | [docs/phase-07-08-kinesis-terraform.md](docs/phase-07-08-kinesis-terraform.md) |
 | 9 | Kubernetes producer deployment (`kind` + Helm) | ⏳ planned | |
 | 10 | Databricks Workflows + Unity Catalog | ⏳ planned | |
 | 11 | Observability — Prometheus + Grafana | ⏳ planned | |

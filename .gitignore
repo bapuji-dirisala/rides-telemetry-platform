@@ -62,3 +62,9 @@ lakehouse/
 airflow/logs/
 airflow/plugins/
 !airflow/plugins/.gitkeep
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
