@@ -1,0 +1,46 @@
+{
+  "title": "Rides Telemetry — Streaming Overview",
+  "schemaVersion": 39,
+  "editable": true,
+  "tags": ["rides", "streaming", "delta"],
+  "timezone": "browser",
+  "time": {"from": "now-1h", "to": "now"},
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1, "title": "Events produced per second", "type": "timeseries",
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 0},
+      "targets": [{
+        "expr": "sum by (event_type) (rate(rides_events_produced_total[1m]))",
+        "legendFormat": "{{event_type}}"
+      }]
+    },
+    {
+      "id": 2, "title": "Bronze consumer lag (messages)", "type": "timeseries",
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 0},
+      "targets": [{
+        "expr": "max by (topic) (rides_bronze_consumer_lag_messages)",
+        "legendFormat": "{{topic}}"
+      }]
+    },
+    {
+      "id": 3, "title": "End-to-end latency p50 / p95 / p99", "type": "timeseries",
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 6},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, rate(rides_event_e2e_latency_seconds_bucket[5m]))", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, rate(rides_event_e2e_latency_seconds_bucket[5m]))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, rate(rides_event_e2e_latency_seconds_bucket[5m]))", "legendFormat": "p99"}
+      ]
+    },
+    {
+      "id": 4, "title": "Fraud alerts fired (5m)", "type": "stat",
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 6},
+      "targets": [{"expr": "sum(increase(rides_fraud_alerts_total[5m]))"}]
+    },
+    {
+      "id": 5, "title": "Active trips (H3 res 8)", "type": "stat",
+      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 6},
+      "targets": [{"expr": "sum(rides_active_trips_h3)"}]
+    }
+  ]
+}

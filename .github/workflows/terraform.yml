@@ -1,0 +1,29 @@
+name: terraform
+
+on:
+  push:
+    branches: [main]
+    paths: ["terraform/**", ".github/workflows/terraform.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["terraform/**", ".github/workflows/terraform.yml"]
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.5"
+      - name: fmt check
+        run: terraform -chdir=terraform fmt -recursive -check -diff
+      - name: init (no backend)
+        run: terraform -chdir=terraform init -backend=false
+      - name: validate
+        run: terraform -chdir=terraform validate

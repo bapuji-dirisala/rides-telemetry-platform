@@ -1,0 +1,49 @@
+# Prometheus scrape config for the rides telemetry stack.
+#
+# Scrapes:
+#   - rides-producer Pods (via k8s SD) — emits per-event counters +
+#     Kafka produce latency histograms.
+#   - Redpanda broker admin API — exposes consumer lag + partition
+#     offset metrics.
+#   - Spark Structured Streaming driver — bronze/silver/gold job
+#     progress metrics (JMX exporter sidecar).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: rides-dev
+
+rule_files:
+  - alerts/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: rides-producer
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [rides]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        regex: rides-producer
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        regex: metrics
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+
+  - job_name: redpanda
+    static_configs:
+      - targets: ["redpanda-0.redpanda.rides.svc.cluster.local:9644"]
+    metrics_path: /public_metrics
+
+  - job_name: spark-streaming
+    static_configs:
+      - targets: ["spark-bronze:8090", "spark-silver:8090", "spark-gold:8090"]
+    metrics_path: /metrics/prometheus

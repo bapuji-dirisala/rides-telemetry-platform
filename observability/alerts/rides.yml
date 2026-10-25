@@ -1,0 +1,59 @@
+# Alerting rules — SLO-shaped where possible.
+
+groups:
+  - name: rides.producer
+    interval: 30s
+    rules:
+      - alert: ProducerThroughputDropped
+        expr: |
+          rate(rides_events_produced_total[5m]) < 10
+        for: 5m
+        labels:
+          severity: warning
+          team: rides-platform
+        annotations:
+          summary: "Rides producer is below 10 events/sec for 5m"
+          description: |
+            The synthetic rides producer dropped below the floor rate.
+            Likely the Pod is OOM-killing or crash-looping. Check
+            `kubectl -n rides describe pod/rides-producer-*`.
+
+  - name: rides.bronze
+    interval: 30s
+    rules:
+      - alert: BronzeConsumerLagHigh
+        expr: |
+          max_over_time(rides_bronze_consumer_lag_messages[10m]) > 50000
+        for: 10m
+        labels:
+          severity: critical
+          team: rides-platform
+        annotations:
+          summary: "Bronze is lagging by >50k messages for 10m"
+          description: |
+            Bronze streaming is not keeping up with the producer.
+            Scale `rides-producer` down (temporarily) or add Spark
+            workers to the bronze job cluster.
+
+      - alert: BronzeStreamingNoProgress
+        expr: |
+          rate(spark_streaming_processed_rows_total[5m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+          team: rides-platform
+        annotations:
+          summary: "Spark Structured Streaming bronze job stalled (no rows for 10m)"
+
+  - name: rides.slo
+    interval: 60s
+    rules:
+      - alert: EventLatencyP99Over30s
+        expr: |
+          histogram_quantile(0.99, rate(rides_event_e2e_latency_seconds_bucket[5m])) > 30
+        for: 10m
+        labels:
+          severity: warning
+          team: rides-platform
+        annotations:
+          summary: "End-to-end producer→gold latency p99 > 30s"
